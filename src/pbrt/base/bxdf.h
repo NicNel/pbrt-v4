@@ -151,6 +151,7 @@ struct BSDFSample {
     bool pdfIsProportional = false;
 };
 
+class DisneyBxDF;
 class DiffuseBxDF;
 class DiffuseTransmissionBxDF;
 class DielectricBxDF;
@@ -163,8 +164,8 @@ class CoatedDiffuseBxDF;
 class CoatedConductorBxDF;
 
 // BxDF Definition
-class BxDF
-    : public TaggedPointer<DiffuseTransmissionBxDF, DiffuseBxDF, CoatedDiffuseBxDF,
+class BxDF : public TaggedPointer<DiffuseTransmissionBxDF, DisneyBxDF, DiffuseBxDF,
+                                  CoatedDiffuseBxDF,
                            CoatedConductorBxDF, DielectricBxDF, ThinDielectricBxDF,
                            HairBxDF, MeasuredBxDF, ConductorBxDF, NormalizedFresnelBxDF> {
   public:

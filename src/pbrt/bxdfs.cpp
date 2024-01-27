@@ -59,6 +59,9 @@ std::string ToString(TransportMode mode) {
 }
 
 // BxDF Method Definitions
+std::string DisneyBxDF::ToString() const {
+    return StringPrintf("[ DisneyBxDF Color: %s ]", color);
+}
 std::string DiffuseBxDF::ToString() const {
     return StringPrintf("[ DiffuseBxDF R: %s ]", R);
 }

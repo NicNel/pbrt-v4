@@ -475,6 +475,77 @@ class DiffuseMaterial {
     SpectrumTexture reflectance;
 };
 
+// DisneyMaterial Definition
+class DisneyMaterial {
+  public:
+    // PlasticMaterial Type Definitions
+    using BxDF = DisneyBxDF;
+    using BSSRDF = void;
+
+    // DisneyMaterial Public Methods
+    static const char *Name() { return "DisneyMaterial"; }
+
+    PBRT_CPU_GPU
+    FloatTexture GetDisplacement() const { return displacement; }
+    PBRT_CPU_GPU
+    const Image *GetNormalMap() const { return normalMap; }
+
+    static DisneyMaterial *Create(const TextureParameterDictionary &parameters,
+                                  Image *normalMap, const FileLoc *loc, Allocator alloc);
+
+    template <typename TextureEvaluator>
+    PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
+                                SampledWavelengths &lambda, void *) const {}
+
+    PBRT_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+
+    std::string ToString() const;
+
+    DisneyMaterial(FloatTexture roughness, Float eta, SpectrumTexture color,
+                   Float specular, Float clearcoat, Float metallic, Float subsurface,
+                   Float sheen, FloatTexture displacement, Image *normalMap)
+        : normalMap(normalMap),
+          displacement(displacement),
+          color(color),
+          specular(specular),
+          clearcoat(clearcoat),
+          metallic(metallic),
+          subsurface(subsurface),
+          roughness(roughness),
+          eta(eta),
+          sheen(sheen) {}
+
+    template <typename TextureEvaluator>
+    PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
+        return texEval.CanEvaluate({roughness}, {color});
+    }
+
+    template <typename TextureEvaluator>
+    PBRT_CPU_GPU DisneyBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
+                                    SampledWavelengths &lambda) const {
+        SampledSpectrum c = Clamp(texEval(color, ctx, lambda), 0, 1);
+
+        Float rough = texEval(roughness, ctx);
+
+        return DisneyBxDF(c, eta, rough, specular, clearcoat, metallic, subsurface,
+                          sheen);
+    }
+
+  private:
+    // DisneyMaterial Private Members
+    Image *normalMap;
+    FloatTexture displacement;
+    // parameters
+    SpectrumTexture color;
+    FloatTexture roughness;
+    Float specular;
+    Float clearcoat;
+    Float subsurface;
+    Float eta;
+    Float sheen;
+    Float metallic;
+};
+
 // ConductorMaterial Definition
 class ConductorMaterial {
   public:

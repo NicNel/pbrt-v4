@@ -26,6 +26,231 @@
 
 namespace pbrt {
 
+// DisneyBxDF Definition
+// https://blog.selfshadow.com/publications/s2012-shading-course/burley/s2012_pbs_disney_brdf_notes_v3.pdf
+class DisneyBxDF {
+  public:
+    // DisneyBxDF Public Methods
+    DisneyBxDF() = default;
+    PBRT_CPU_GPU
+    DisneyBxDF(SampledSpectrum color, Float eta, Float roughness, Float specular,
+               Float clearcoat, Float metallic, Float subsurface, Float sheen)
+        : color(color),
+          eta(eta),
+          roughness(roughness),
+          specular(specular),
+          sheen(sheen),
+          clearcoat(clearcoat),
+          subsurface(subsurface),
+          metallic(metallic) {
+        // absorption = SampledSpectrum(0.f);
+        // metallic = 0.0f;
+        //  subsurface = 0.0f;
+        //  specular = 1.f;
+        //  roughness = 0.2f;
+        specularTint = 0.0f;
+        anisotropic = 0.0f;
+        // sheen = 0.0f;
+        sheenTint = 0.0f;
+        // clearcoat = 0.0f;
+        clearcoatGloss = 1.0f;
+        transmission = 0.0f;
+        twoSided = true;
+    }
+    PBRT_CPU_GPU
+    Float SchlickFresnel(Float u) const {
+        Float m = Clamp(1.f - u, 0.0f, 1.0f);
+        Float m2 = m * m;
+        return m2 * m2 * m;
+    }
+
+    PBRT_CPU_GPU
+    Float GTR1(Float cosTheta, Float a) const {
+        if (a >= 1)
+            return InvPi;
+        Float a2 = a * a;
+        Float t = 1.f + (a2 - 1) * cosTheta * cosTheta;
+        return (a2 - 1.f) / (Pi * logf(a2) * t);
+    }
+
+    PBRT_CPU_GPU
+    Float GTR2(Float cosTheta, Float a) const {
+        Float a2 = a * a;
+        Float t = 1.0f + (a2 - 1.0f) * cosTheta * cosTheta;
+        return a2 / (Pi * t * t);
+    }
+
+    PBRT_CPU_GPU
+    Float SmithGGX(Float cosTheta, Float a) const {
+        Float a2 = a * a;
+        Float b = cosTheta * cosTheta;
+        return 1.f / (cosTheta + sqrtf(a2 + b - a2 * b));
+    }
+
+    PBRT_CPU_GPU
+    Float SchlickF0FromEta(Float eta) const { return Sqr(eta - 1.f) / Sqr(eta + 1.f); }
+
+    PBRT_CPU_GPU
+    Vector3f Sample_mf(Vector3f wo, Point2f u) const {
+        // microfacet sampling
+        Float r1 = u.x, r2 = u.y;
+        Float rc = std::max<Float>(0.001f, roughness);
+        Float phiHalf = r1 * 2.f * Pi;
+        Float cosThetaHalf = sqrtf((1.0f - r2) / (1.0f + (Sqr(rc) - 1.0f) * r2));
+        Float sinThetaHalf = sqrtf(std::max<Float>(0.0f, 1.0f - Sqr(cosThetaHalf)));
+        Float sinPhiHalf = sinf(phiHalf);
+        Float cosPhiHalf = cosf(phiHalf);
+
+        Float hx = (sinThetaHalf * cosPhiHalf);
+        Float hy = (sinThetaHalf * sinPhiHalf);
+        Float hz = cosThetaHalf;
+
+        Vector3f hv(hx, hy, hz);
+
+        if (Dot(hv, wo) <= 0.0f)
+            hv *= -1.0f;
+        return 2.0f * Dot(wo, hv) * hv - wo;
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum DisneyDiffuseF(Vector3f wo, Vector3f wi, Vector3f wh) const {
+        Float rc = std::max<Float>(0.001f, roughness);
+        Float Fo = SchlickFresnel(CosTheta(wo)), Fi = SchlickFresnel(CosTheta(wi));
+        Float c2 = Dot(wi, wh);
+        Float Fd90 = 0.5f + 2.f * rc * c2 * c2;
+        Float Fd = Lerp(Fi, 1.0f, Fd90) * Lerp(Fo, 1.0f, Fd90);
+
+        return color * InvPi * Fd * (1.0f - metallic);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum BRDF_F(Vector3f wo, Vector3f wi) const {
+        Float cosWi = CosTheta(wi);
+        Float cosWo = CosTheta(wo);
+        if (cosWo < 0 || cosWi < 0)
+            return SampledSpectrum(0);
+        Vector3f wh = Normalize(wi + wo);
+        Float cosWh = CosTheta(wh);
+
+        if (cosWi <= 0) {
+            // transmittance
+            return SampledSpectrum(0);
+        } else {
+            Float FH = SchlickFresnel(Dot(wi, wh));
+            SampledSpectrum F0 =
+                Lerp(metallic, specular * .08f * SampledSpectrum(1.0f), color);
+            Float rc = std::max<Float>(0.001f, roughness);
+
+            // main reflection
+            Float D = GTR2(cosWh, rc);
+            SampledSpectrum F = Lerp(FH, F0, SampledSpectrum(1));
+            Float G = SmithGGX(cosWo, rc) * SmithGGX(cosWi, rc);
+            // coating
+            Float Dc = GTR1(cosWh, Lerp(clearcoatGloss, .1f, .001f));
+            Float Fc = Lerp(FH, .04f, 1.0f);
+            Float Gc = SmithGGX(cosWi, .25f) * SmithGGX(cosWo, .25f);
+
+            SampledSpectrum spec = D * F * G;
+            SampledSpectrum diffuse = DisneyDiffuseF(wo, wi, wh);
+            SampledSpectrum coat = SampledSpectrum(clearcoat * Dc * Fc * Gc);
+
+            // sheen
+            SampledSpectrum tintF = Lerp(sheenTint, SampledSpectrum(1), color);
+            SampledSpectrum sheenC = FH * sheen * tintF;
+
+            return diffuse + sheenC + spec + coat;
+        }
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+        if (twoSided && wo.z < 0) {
+            wo = -wo;
+            wi = -wi;
+        }
+        if (!SameHemisphere(wo, wi))
+            return SampledSpectrum(0);
+        return BRDF_F(wo, wi);
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<BSDFSample> Sample_f(
+        Vector3f wo, Float uc, Point2f u, TransportMode mode,
+        BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
+            return {};
+
+        bool flip = false;
+        if (twoSided && wo.z < 0) {
+            wo = -wo;
+            flip = true;
+        }
+
+        Vector3f wi(0, 0, 0);
+        BxDFFlags flag = BxDFFlags::Unset;
+
+        if (uc < 0.5f) {
+            // diffuse reflection sampling
+            wi = SampleCosineHemisphere(u);
+            flag = BxDFFlags::DiffuseReflection;
+        } else {
+            // specular reflection sampling
+            wi = Sample_mf(wo, u);
+            flag = BxDFFlags::GlossyReflection;
+        }
+        Float pdf = BRDF_PDF(wo, wi);
+        SampledSpectrum fd = BRDF_F(wo, wi);
+        if (flip)
+            wi = -wi;
+        return BSDFSample(fd, wi, pdf, flag);
+    }
+    PBRT_CPU_GPU
+    Float BRDF_PDF(Vector3f wo, Vector3f wi) const {
+        Float rc = std::max<Float>(0.001f, roughness);
+        Vector3f half = Normalize(wo + wi);
+        Float absCosWh = AbsCosTheta(half);
+
+        Float D = GTR2(absCosWh, rc);
+        Float pdfSpec = (0.25f * D * absCosWh) / std::max<float>(1.e-6f, Dot(wi, half));
+        Float pdfDiff = AbsCosTheta(wi) * InvPi;
+
+        return Lerp(0.5f, pdfDiff, pdfSpec);
+    }
+    PBRT_CPU_GPU
+    Float PDF(Vector3f wo, Vector3f wi, TransportMode mode,
+              BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
+        if (twoSided && wo.z < 0) {
+            wo = -wo;
+            wi = -wi;
+        }
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection) || !SameHemisphere(wo, wi))
+            return 0;
+        return BRDF_PDF(wo, wi);
+    }
+
+    PBRT_CPU_GPU
+    static constexpr const char *Name() { return "DisneyBxDF"; }
+
+    std::string ToString() const;
+
+    PBRT_CPU_GPU
+    void Regularize() {}
+
+    PBRT_CPU_GPU
+    BxDFFlags Flags() const {
+        BxDFFlags flags =
+            (BxDFFlags::Reflection | BxDFFlags::Specular | BxDFFlags::GlossyReflection);
+        return flags | (BxDFFlags::DiffuseReflection | BxDFFlags::DiffuseTransmission);
+    }
+
+  private:
+    SampledSpectrum color;
+    Float eta;
+    bool twoSided;
+    Float metallic, subsurface, specular, roughness, specularTint, anisotropic, sheen,
+        sheenTint, clearcoat, clearcoatGloss, transmission;
+};
+
 // DiffuseBxDF Definition
 class DiffuseBxDF {
   public:

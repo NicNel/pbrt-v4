@@ -204,6 +204,37 @@ DiffuseMaterial *DiffuseMaterial::Create(const TextureParameterDictionary &param
     return alloc.new_object<DiffuseMaterial>(reflectance, displacement, normalMap);
 }
 
+// DisneyMaterial
+std::string DisneyMaterial::ToString() const {
+    return StringPrintf(
+        "[ DisneyMaterial displacement: %s normapMap: %s reflectance: %s ]", displacement,
+        normalMap ? normalMap->ToString() : std::string("(nullptr)"), color);
+}
+
+DisneyMaterial *DisneyMaterial::Create(const TextureParameterDictionary &parameters,
+                                       Image *normalMap, const FileLoc *loc,
+                                       Allocator alloc) {
+    SpectrumTexture color =
+        parameters.GetSpectrumTexture("color", nullptr, SpectrumType::Albedo, alloc);
+    if (!color)
+        color = alloc.new_object<SpectrumConstantTexture>(
+            alloc.new_object<ConstantSpectrum>(0.5f));
+
+    FloatTexture roughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+
+    FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
+
+    Float eta = parameters.GetOneFloat("eta", 1.5f);
+    Float specular = parameters.GetOneFloat("specular", 0.5f);
+    Float sheen = parameters.GetOneFloat("sheen", 0.0f);
+    Float clearcoat = parameters.GetOneFloat("clearcoat", 0.0f);
+    Float subsurface = parameters.GetOneFloat("subsurface", 0.0f);
+    Float metallic = parameters.GetOneFloat("metallic", 0.0f);
+    return alloc.new_object<DisneyMaterial>(roughness, eta, color, specular, clearcoat,
+                                            metallic, subsurface, sheen, displacement,
+                                            normalMap);
+}
+
 // ConductorMaterial Method Definitions
 std::string ConductorMaterial::ToString() const {
     return StringPrintf("[ ConductorMaterial displacement: %s normalMap: %s eta: %s "
@@ -643,6 +674,8 @@ Material Material::Create(const std::string &name,
         return nullptr;
     else if (name == "diffuse")
         material = DiffuseMaterial::Create(parameters, normalMap, loc, alloc);
+    else if (name == "disney")
+        material = DisneyMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "coateddiffuse")
         material = CoatedDiffuseMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "coatedconductor")
