@@ -284,6 +284,18 @@ inline double SafeSqrt(double x) {
     return std::sqrt(std::max(0., x));
 }
 
+PBRT_CPU_GPU
+inline double InvSqrt(double x) {
+    DCHECK_GE(x, -1e-3);
+    return 1.0 / std::sqrt(x);
+}
+
+PBRT_CPU_GPU
+inline float InvSqrtf(float x) {
+    DCHECK_GE(x, -1e-3);
+    return 1.0f / std::sqrtf(x);
+}
+
 template <typename T>
 PBRT_CPU_GPU inline constexpr T Sqr(T v) {
     return v * v;
