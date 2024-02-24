@@ -478,7 +478,7 @@ class DiffuseMaterial {
 // DisneyMaterial Definition
 class DisneyMaterial {
   public:
-    // PlasticMaterial Type Definitions
+    // DisneyMaterial Type Definitions
     using BxDF = DisneyBxDF;
     using BSSRDF = void;
 
@@ -502,8 +502,10 @@ class DisneyMaterial {
     std::string ToString() const;
 
     DisneyMaterial(FloatTexture roughness, Float eta, SpectrumTexture color,
-                   Float specular, Float clearcoat, Float metallic, Float subsurface,
-                   Float sheen, FloatTexture displacement, Image *normalMap)
+                   Float specular, Float clearcoat, FloatTexture metallic,
+                   Float subsurface,
+                   Float sheen, Float sheenTint, Float clearcoatGloss,
+                   bool isSpecular, FloatTexture displacement, Image *normalMap)
         : normalMap(normalMap),
           displacement(displacement),
           color(color),
@@ -513,7 +515,10 @@ class DisneyMaterial {
           subsurface(subsurface),
           roughness(roughness),
           eta(eta),
-          sheen(sheen) {}
+          sheen(sheen),
+          sheenTint(sheenTint),
+          clearcoatGloss(clearcoatGloss),
+          isSpecular(isSpecular) {}
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
@@ -525,10 +530,11 @@ class DisneyMaterial {
                                     SampledWavelengths &lambda) const {
         SampledSpectrum c = Clamp(texEval(color, ctx, lambda), 0, 1);
 
-        Float rough = texEval(roughness, ctx);
-
-        return DisneyBxDF(c, eta, rough, specular, clearcoat, metallic, subsurface,
-                          sheen);
+        Float rough = Clamp(texEval(roughness, ctx), 0.001f, 1.f);
+        Float metal = Clamp(texEval(metallic, ctx), 0.f, 1.f);
+        Float lum = c.y(lambda);
+        return DisneyBxDF(c, eta, rough, specular, clearcoat, metal, subsurface, sheen,
+                          sheenTint, clearcoatGloss, lum, isSpecular);
     }
 
   private:
@@ -542,8 +548,10 @@ class DisneyMaterial {
     Float clearcoat;
     Float subsurface;
     Float eta;
-    Float sheen;
-    Float metallic;
+    Float sheen, sheenTint;
+    FloatTexture metallic;
+    Float clearcoatGloss;
+    bool isSpecular;
 };
 
 // ConductorMaterial Definition
