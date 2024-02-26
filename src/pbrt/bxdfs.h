@@ -317,7 +317,8 @@ class DisneyBxDF {
         Float G1 = SmithGGXVN(wo, roughness); 
         Float D = GTR2(absCosWh, roughness);
         Float J = 1.0f / (4.0f * AbsDot(wo, wh));
-        Float pdfSpec = (G1 * AbsDot(wo, wh) * D * J) / AbsCosTheta(wo);
+        Float Dv = (G1 * std::max<Float>(0, Dot(wo, wh)) * D) / AbsCosTheta(wo);
+        Float pdfSpec = Dv * J;
         Float pdfDiff = CosineHemispherePDF(AbsCosTheta(wi));
 
         Float Dc = GTR1(absCosWh, Lerp(clearcoatGloss, .1f, .001f));
