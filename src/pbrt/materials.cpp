@@ -233,9 +233,10 @@ DisneyMaterial *DisneyMaterial::Create(const TextureParameterDictionary &paramet
     //Float metallic = parameters.GetOneFloat("metallic", 0.0f);
     FloatTexture metallic = parameters.GetFloatTexture("metallic", 0.f, alloc);
     Float clearcoatGloss = parameters.GetOneFloat("clearcoatGloss", 1.0f);
+    Float anisotropic = parameters.GetOneFloat("anisotropic", 0.0f);
     bool isSpecular = parameters.GetOneBool("isSpecular", false);
-    return alloc.new_object<DisneyMaterial>(roughness, eta, color, specular, clearcoat,
-                                            metallic, subsurface, sheen, sheenTint, clearcoatGloss, isSpecular, displacement,
+    return alloc.new_object<DisneyMaterial>(roughness, eta, color, specular, clearcoat, metallic, subsurface, sheen,
+        sheenTint, clearcoatGloss, anisotropic, isSpecular, displacement,
                                             normalMap);
 }
 
