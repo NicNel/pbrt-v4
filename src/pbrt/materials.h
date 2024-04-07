@@ -503,8 +503,8 @@ class DisneyMaterial {
 
     DisneyMaterial(FloatTexture roughness, Float eta, SpectrumTexture color,
                    Float specular, Float clearcoat, FloatTexture metallic,
-                   Float subsurface,
-                   Float sheen, Float sheenTint, Float clearcoatGloss,
+                   Float subsurface, Float sheen, Float sheenTint, Float clearcoatGloss,
+                   Float anisotropic,
                    bool isSpecular, FloatTexture displacement, Image *normalMap)
         : normalMap(normalMap),
           displacement(displacement),
@@ -518,7 +518,8 @@ class DisneyMaterial {
           sheen(sheen),
           sheenTint(sheenTint),
           clearcoatGloss(clearcoatGloss),
-          isSpecular(isSpecular) {}
+          isSpecular(isSpecular),
+          anisotropic(anisotropic) {}
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
@@ -534,7 +535,7 @@ class DisneyMaterial {
         Float metal = Clamp(texEval(metallic, ctx), 0.f, 1.f);
         Float lum = c.y(lambda);
         return DisneyBxDF(c, eta, rough, specular, clearcoat, metal, subsurface, sheen,
-                          sheenTint, clearcoatGloss, lum, isSpecular);
+                          sheenTint, clearcoatGloss, anisotropic, lum, isSpecular);
     }
 
   private:
@@ -544,6 +545,7 @@ class DisneyMaterial {
     // parameters
     SpectrumTexture color;
     FloatTexture roughness;
+    Float anisotropic;
     Float specular;
     Float clearcoat;
     Float subsurface;
