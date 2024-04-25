@@ -34,7 +34,8 @@ class DisneyBxDF {
     PBRT_CPU_GPU
     DisneyBxDF(SampledSpectrum color, Float eta, Float roughness, Float specular,
                Float clearcoat, Float metallic, Float subsurface, Float sheen,
-               Float sheenTint, Float clearcoatGloss, Float anisotropic,
+               Float sheenTint, Float clearcoatGloss,
+               Float specularTint, Float anisotropic,
                Float transmission, Float Lum,
                bool isSpecular)
         : Lum(Lum),
@@ -50,13 +51,14 @@ class DisneyBxDF {
           clearcoatGloss(clearcoatGloss),
           isSpecular(isSpecular),
           anisotropic(anisotropic),
-          transmission(transmission) {
+          transmission(transmission),
+          specularTint(specularTint) {
         // absorption = SampledSpectrum(0.f);
         // metallic = 0.0f;
         //  subsurface = 0.0f;
         //  specular = 1.f;
         //  roughness = 0.2f;
-        specularTint = 0.0f;
+        //specularTint = 0.0f;
         //anisotropic = 0.0f;
         // sheen = 0.0f;
         // sheenTint = 0.0f;
@@ -118,6 +120,15 @@ class DisneyBxDF {
     }
 
     PBRT_CPU_GPU
+    Float calc_eta() const {
+        Float eta_m = eta;
+        if (isSpecular)
+            eta_m = (2.0f / (1.0f - sqrtf(0.08f * specular))) - 1.0f;
+        eta_m = std::max<Float>(1.001f, eta_m);
+        return eta_m;
+    }
+
+    PBRT_CPU_GPU
     Vector3f SampleCoating(Vector3f wo, Point2f u) const {
         Float gloss = Lerp(clearcoatGloss, 0.1f, 0.001f);
         Float alpha2 = gloss * gloss;
@@ -135,33 +146,44 @@ class DisneyBxDF {
     }
 
     PBRT_CPU_GPU
-    void ComputeWeights(Float &sr, Float &dr, Float &cr, Float &trr, Float &tsr,
+    void ComputeWeights(Float &sr, Float &dr, Float &dt, Float &cr, Float &trr, Float &tsr,
                         Float frDielectric, BxDFReflTransFlags sampleFlags) const {
         Float m = metallic;
         Float d = (1.0f - metallic);
         Float t = (1.f - transmission);
 
-        Float dw = d;
+        Float drw = (1.f-subsurface)*d;
+        Float dtw = subsurface*d;
+
+        Float specR = frDielectric;
+        Float specT = 1.f - specR;
+
         Float sw = m + d;
         Float cw = clearcoat;
-        Float norm = 1.0f / (sw + dw + cw);
+
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection)) {
+            drw = 0; specR = 0; cw = 0; sw = 0;
+        }
+        if (!(sampleFlags & BxDFReflTransFlags::Transmission)) {
+            dtw = 0; specT = 0;
+        }
+        Float norm = 1.f;
         //brdf
-        sr = sw * norm * t;
-        dr = dw * norm * t;
-        cr = cw * norm * t;
-        //bsdf
-        Float R = frDielectric;
-        Float T = 1.f - R;
-        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-            R = 0;
-        if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-            T = 0;
-        if (R == 0 && T == 0)
+        if (sw == 0 && drw == 0 && dtw == 0 && cw == 0)
             norm = 0;
         else
-            norm = 1.f / (R + T);
-        trr = R * norm * transmission;
-        tsr = T * norm * transmission;
+            norm = 1.0f / (sw + drw + dtw + cw);
+        sr = sw * norm * t;
+        dr = drw * norm * t;
+        dt = dtw * norm * t;
+        cr = cw * norm * t;
+        //bsdf
+        if (specR == 0 && specT == 0)
+            norm = 0;
+        else
+            norm = 1.f / (specR + specT);
+        trr = specR * norm * transmission;
+        tsr = specT * norm * transmission;
     }
 
     PBRT_CPU_GPU
@@ -195,11 +217,14 @@ class DisneyBxDF {
         
         SampledSpectrum bsdf(0);
         SampledSpectrum brdf(0);
-        
+
+        SampledSpectrum Ctint = Lum > 0 ? (color / Lum) : SampledSpectrum(1.f);
+        Float eta_m = calc_eta();
+        //bsdf
         if (transmission > 0) {
             Float etap = 1.f;
             if (!reflect)
-                etap = cosTheta_o > 0 ? eta : (1.f / eta);
+                etap = cosTheta_o > 0 ? eta_m : (1.f / eta_m);
             Vector3f wh = wi * etap + wo;
             wh = Normalize(wh);
             wh = FaceForward(wh, Normal3f(0, 0, 1));
@@ -207,20 +232,15 @@ class DisneyBxDF {
             // Discard backfacing microfacets
             if (Dot(wh, wi) * cosTheta_i < 0 || Dot(wh, wo) * cosTheta_o < 0)
                 calc = false;
-            if (eta == 1.f)
-                calc = false;
             if (calc)
             if (reflect) {
-                Vector2f a = aniso_to_axay();
                 Float D = ggx.D(wh);
-                SampledSpectrum F = SampledSpectrum(
-                    FrDielectric(Dot(wo, wh), eta));  // dielectric fresnel
+                SampledSpectrum F = SampledSpectrum(FrDielectric(Dot(wo, wh), eta_m));// dielectric fresnel
                 Float G = ggx.G(wo,wi);
                 Float J = 1.f / std::abs(4.f * CosTheta(wo) * CosTheta(wi));
-                bsdf = (D * F * G) * J * (1.f - metallic);
+                bsdf = (D * F * G) * J;
             } else {
-                Vector2f a = aniso_to_axay();
-                Float F = FrDielectric(Dot(wo, wh), eta);
+                Float F = FrDielectric(Dot(wo, wh), eta_m);
                 Float D = ggx.D(wh);
                 Float G = ggx.G(wo,wi);
                 Float denom = Sqr(Dot(wi, wh) + Dot(wo, wh) / etap);
@@ -230,10 +250,10 @@ class DisneyBxDF {
                                             (CosTheta(wi) * CosTheta(wo) * denom)));
                 if (mode == TransportMode::Radiance)
                     ft /= Sqr(etap);
-                bsdf = SampledSpectrum(ft * (1.f - metallic));
+                bsdf = SampledSpectrum(ft);
             }
         }
-
+        //brdf
         if (transmission < 1.f)
         if (!reflect) {
             // transmittance
@@ -251,23 +271,25 @@ class DisneyBxDF {
             Vector3f wh = wi + wo;
             wh = Normalize(wh);
             wh = FaceForward(wh, Normal3f(0, 0, 1));
-            Float cosWh = CosTheta(wh);
-           
-            SampledSpectrum Ctint = Lum > 0 ? (color / Lum) : SampledSpectrum(1.);
+                       
             Float FH = SchlickFresnel(Dot(wi, wh));
-            
+
             // main reflection
             Float D = ggx.D(wh);
-            SampledSpectrum FD = SampledSpectrum(FrDielectric(Dot(wo, wh), eta));//dielectric fresnel
+            SampledSpectrum FD =SampledSpectrum(FrDielectric(Dot(wo, wh), eta_m));//dielectric fresnel
+            if (specularTint>0)
+            {
+                SampledSpectrum Cspec0 = SchlickF0FromEta(eta_m) * Ctint;
+                SampledSpectrum SchlickF = Lerp(FH, Cspec0, SampledSpectrum(1));
+                FD = Lerp(specularTint, FD, SchlickF);
+            }
             SampledSpectrum FM = Lerp(FH, color, SampledSpectrum(1.f));//metallic fresnel
-            if (isSpecular)
-                FD = Lerp(FH, specular*0.08f*SampledSpectrum(1.f), SampledSpectrum(1.f));
             
             SampledSpectrum F = Lerp(metallic, FD, FM);
             Float G = ggx.G(wo,wi);
 
             // coating
-            Float Dc = GTR1(cosWh, Lerp(clearcoatGloss, .1f, .001f));
+            Float Dc = GTR1(CosTheta(wh), Lerp(clearcoatGloss, .1f, .001f));
             Float Fc = Lerp(FH, .04f, 1.0f);
             Float Gc = SmithGGXVN(wo, .25f) * SmithGGXVN(wi, .25f);
 
@@ -275,12 +297,13 @@ class DisneyBxDF {
             SampledSpectrum spec = (D * F * G) * J;
             SampledSpectrum diffuse = DisneyDiffuseF(wo, wi, wh);
             Float coat = (Dc * Fc * Gc) * J;
+            SampledSpectrum coating = SampledSpectrum(clearcoat * coat);// * 0.25
             
             // sheen
             SampledSpectrum tintF = Lerp(sheenTint, SampledSpectrum(1), Ctint);
             SampledSpectrum sheenC = FH * sheen * tintF;
 
-            brdf = diffuse + sheenC + spec + SampledSpectrum(clearcoat * coat);
+            brdf = diffuse + sheenC + spec + coating;
         }
         return Lerp(transmission, brdf, bsdf);
     }
@@ -296,22 +319,22 @@ class DisneyBxDF {
         BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
         bool flip = false;
         
-        // Declare _RNG_ for difftrans sampling
-        RNG rng(Hash(GetOptions().seed, wo), Hash(uc, u));
-        auto r = [&rng]() { return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon); };
-
         Vector3f wi(0, 0, 0);
         BxDFFlags flag = BxDFFlags::Unset;
 
         Vector3f wm = ggx.Sample_wm(wo, u);
-        Float F = FrDielectric(Dot(wo, wm), eta);
-        Float sr, cr, dr, trr, tsr;
-        ComputeWeights(sr, dr, cr, trr, tsr, F, sampleFlags);
+        Float eta_m = calc_eta();
+
+        Float F = FrDielectric(Dot(wo, wm), eta_m);
+        Float sr, cr, dr, dt, trr, tsr;
+        ComputeWeights(sr, dr, dt, cr, trr, tsr, F, sampleFlags);
 
         Float coatingTh = sr + cr;
         Float diffuseTh = coatingTh + dr;
-        Float trrTh = diffuseTh + trr;
+        Float subsurfaceTh = diffuseTh + dt;
+        Float trrTh = subsurfaceTh + trr;
         Float tsrTh = trrTh + tsr;
+
         Float etap = 1.f;
         if (uc <= sr) {
             if (wo.z < 0) {
@@ -337,33 +360,19 @@ class DisneyBxDF {
                 return {};
             flag = BxDFFlags::GlossyReflection;
         } else if (uc > coatingTh && uc <= diffuseTh) {
-            // translucent sampling rate
-            Float SS = (subsurface);
-            Float SR = (1.f - subsurface);
-            if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-                SR = 0;
-            if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-                SS = 0;
-            if (SR == 0 && SS == 0)
-                return {};
-            Float N = 1.f / (SS + SR);
-            SS *= N;
-            SR *= N;
-            // not sure about transmittance sampling for now
-            if (r() <= SS) {
-                // diffuse Transmission sampling
-                wi = SampleCosineHemisphere(u);
-                if (wo.z > 0)
-                    wi.z *= -1;
-                flag = BxDFFlags::DiffuseTransmission;
-            } else {
-                // diffuse reflection sampling
-                wi = SampleCosineHemisphere(u);
-                if (wo.z < 0)
-                    wi.z *= -1;
-                flag = BxDFFlags::DiffuseReflection;
-            }
-        } else if (uc > diffuseTh && uc <= trrTh) 
+            // diffuse reflection sampling
+            wi = SampleCosineHemisphere(u);
+            if (wo.z < 0)
+                wi.z *= -1;
+            flag = BxDFFlags::DiffuseReflection;
+
+        } else if (uc > diffuseTh && uc <= subsurfaceTh) {
+            // diffuse Transmission sampling
+            wi = SampleCosineHemisphere(u);
+            if (wo.z > 0)
+                wi.z *= -1;
+            flag = BxDFFlags::DiffuseTransmission;
+        } else if (uc > subsurfaceTh && uc <= trrTh) 
         {
             // specular reflection sampling
             if (CosTheta(wo) * CosTheta(wm) <= 0.0f)
@@ -375,7 +384,7 @@ class DisneyBxDF {
         } else if (uc > trrTh && uc <= tsrTh) {
             if (wm.z < 0.0)
                 wm = -wm;
-            bool tir = !Refract(wo, (Normal3f)wm, eta, &etap, &wi);
+            bool tir = !Refract(wo, (Normal3f)wm, eta_m, &etap, &wi);
             if (SameHemisphere(wo, wi) || wi.z == 0 || tir)
                 return {};
             flag = BxDFFlags::GlossyTransmission;
@@ -395,30 +404,18 @@ class DisneyBxDF {
         
         Float cosTheta_o = CosTheta(wo), cosTheta_i = CosTheta(wi);
         bool reflect = cosTheta_i * cosTheta_o > 0;
+        Float eta_m = calc_eta();
         float etap = 1.f;
         if (!reflect)
-            etap = cosTheta_o > 0 ? eta : (1.f / eta);
+            etap = cosTheta_o > 0 ? eta_m : (1.f / eta_m);
         
         Vector3f wh = wi * etap + wo;
         wh = Normalize(wh);
         wh = FaceForward(wh, Normal3f(0, 0, 1));
-
-        Float F = FrDielectric(Dot(wo, wh), eta);
-        Float sr, cr, dr, trr, tsr;
-        ComputeWeights(sr, dr, cr, trr, tsr, F, sampleFlags);
-
-        //translucent sampling rate
-        Float SS = (subsurface);
-        Float SR = (1.f - subsurface);
-        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-            SR = 0;
-        if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-            SS = 0;
-        if (SR == 0 && SS == 0)
-            return {};
-        Float N = 1.f / (SS+SR);
-        SS *= N;
-        SR *= N;
+        
+        Float F = FrDielectric(Dot(wo, wh), eta_m);
+        Float sr, cr, dr, dt, trr, tsr;
+        ComputeWeights(sr, dr, dt, cr, trr, tsr, F, sampleFlags);
 
         if (reflect) {
             Float J = 1.0f / (4.f * AbsDot(wo, wh));
@@ -441,7 +438,7 @@ class DisneyBxDF {
             Float Dc = GTR1(absCosWh, Lerp(clearcoatGloss, .1f, .001f));
             Float pdfCc = (Dc * absCosWh) * J;
 
-            return pdfSpec * sr + pdfDiff * SR * dr + pdfCc * cr + pdfSpecTrans * trr;
+            return pdfSpec * sr + pdfDiff * dr + pdfCc * cr + pdfSpecTrans * trr;
         } else
         {
             Float specTransPdf = 0;
@@ -450,8 +447,6 @@ class DisneyBxDF {
                 bool calc = true;
                 // Discard backfacing microfacets
                 if (Dot(wh, wi) * cosTheta_i < 0 || Dot(wh, wo) * cosTheta_o < 0)
-                    calc = false;
-                if (eta == 1.f)
                     calc = false;
                 if (calc) {
                     Float denom = Sqr(Dot(wi, wh) + Dot(wo, wh) / etap);
@@ -462,7 +457,7 @@ class DisneyBxDF {
             }
             if (subsurface > 0) {
                 Float pdfDiff = CosineHemispherePDF(AbsCosTheta(wi));
-                diffTransPdf = pdfDiff * SS * dr;
+                diffTransPdf = pdfDiff * dt;
             }
             return specTransPdf + diffTransPdf;
         }
